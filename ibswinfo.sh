@@ -281,15 +281,11 @@ slot_idx_str="slot_index=0x0"
 [[ ${mft_cur//./} -ge 4301 ]] && add_tmp_idx="asic_index=0x0,ig=0x0,i=0x0,"
 
 # --- [PATCH] NDR/Quantum-2 Specific Index Logic ---
-# Based on field logs:
-# MGIR, MGPIR, MSPS, MFCR, FORE, MSGI -> No slot_index
-# MTMP, MTCAP -> Needs slot_index
 
-# rid[MGIR]  (No index needed on newer FW)
-# rid[MGPIR] (No index needed)
-# rid[MSPS]  (No index needed)
-# rid[MFCR]  (No index needed)
-# rid[FORE]  (No index needed)
+# MGPIR NEEDS index on NDR (verified via error logs)
+rid[MGPIR]+="$slot_idx_str"
+
+# MGIR, MSPS, MFCR, FORE -> NO index (verified via logs)
 
 rid[MSCI]+="index=0x0" # handle main CPLD only
 rid[SPZR]+="swid=0x0"
@@ -365,7 +361,6 @@ done <<< "$_regs"
     # PSID
     psid=$(mstr_dec '^psid' MGIR)
 
-
     # FW version
     maj=$(htod "$(awk '/^extended_major / {printf $NF}' <<< "${reg[MGIR]}")")
     min=$(htod "$(awk '/^extended_minor / {printf $NF}' <<< "${reg[MGIR]}")")
@@ -415,8 +410,10 @@ done <<< "$_regs"
     # optionally get modules temperature
     [[ "$opt_T" == "1" ]] && {
         _qtps=$(for q in $(seq 1 "$nm"); do
+                    # [PATCH] NDR Offset: Index 65 (0x41) is Module 1
+                    # So offset is q + 64 (1+64=65)
                     i=$(dtoh $((q+63)))
-                    r="sensor_index=0x$i,${slot_idx_str}" # Patched to include slot_index
+                    r="sensor_index=0x$i,${slot_idx_str}"
                     r+=${add_tmp_idx:+,$add_tmp_idx}
                     echo "$q" "$(get_reg MTMP "$r" |\
                                  awk '/^temperature / {print $NF}')" &
@@ -443,10 +440,7 @@ done <<< "$_regs"
         [[ ${at_bmsk:$((i-1)):1} == 1 ]] && at_idxs+="$((at_bmsz-i)) "
     done
     _fsps=$(for t in ${at_idxs:-}; do
-                # [PATCH] MFSM checks - DOES it need slot_index?
-                # MFCR didn't need it, MFSM usually follows MFCR pattern.
-                # If this fails, we might need to add $slot_idx_str here.
-                # Assuming NO index based on MFCR check.
+                # [PATCH] MFSM checks - No slot_index needed on NDR
                 echo "$t" "$(get_reg MFSM "tacho=0x$(dtoh "$t")" |&
                              awk '/^rpm / {print $NF}')" &
              done)
@@ -581,6 +575,7 @@ out_kv "temperature (C)" "${tp}"
 out_kv "max temp (C)" "${mt}"
 out_kv "warn threshold (C)" "$twl/$twh (low/high)"
 [[ "$opt_T" == "1" ]] && {
+    sep
     for q in $(seq 1 "$nm"); do
         out_kv "module#$(printf "%02d" "$q") (C) " "${qt[$q]}"
     done
@@ -593,3 +588,4 @@ for t in ${at_idxs:-}; do
     out_kv "fan#$t (rpm)" "${fs[$t]}"
 done
 sep
+
