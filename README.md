@@ -1,0 +1,2 @@
+# ibswinfo
+Infiniband Switch Info
