@@ -1,136 +1,276 @@
-# ibswinfo (NDR / Quantum-2 Patched)
+# ibswinfo - InfiniBand Switch Information Tool
 
-这是一个用于从 **非管理型 (Unmanaged)** Mellanox/NVIDIA Infiniband 交换机收集硬件信息的 Bash 实用工具。
+A unified command-line tool for gathering detailed information from unmanaged NVIDIA InfiniBand switches. Supports both **NDR (QM9700/Quantum-2)** and **HDR (QM8700/Quantum)** switches with multi-subnet/network plane selection capability.
 
-原版脚本由 [Kilian Cavalotti](https://github.com/kiliancavalotti) 开发。本版本经过修改和验证，已支持 **NVIDIA Quantum-2 (NDR)** 系列交换机（如 QM9700/QM9790）。
+## Features
 
-由于非管理型交换机没有 SSH 命令行或 Web 界面，该工具通过带内 (In-Band) 访问底层硬件寄存器，来提取序列号、温度、风扇转速、电源状态等关键信息。
+- **Unified Support**: Single script supports both QM9700 (NDR/400G) and QM8700 (HDR/200G) switches
+- **Multi-Subnet Access**: Query switches across different network planes using specific HCA devices
+- **Auto-Detection**: Automatically detects switch type (NDR/HDR) when not specified
+- **Comprehensive Information**: Retrieves inventory, vitals, status, and module temperatures
+- **Node Description Management**: Read and set switch node descriptions
 
-## 🚀 主要更新 (针对 NDR 适配)
+## Requirements
 
-针对 NVIDIA Quantum-2 (NDR) 架构进行了以下核心修复：
-1.  **修复寄存器索引 (Register Indexes)**：
-    *   NDR 架构的 `MTMP` (温度) 和 `MTCAP` 寄存器强制要求 `slot_index` 参数。
-    *   修正了 `MGIR`, `MSPS`, `MFCR` 等寄存器不需要索引导致报错的问题。
-2.  **MFT 版本兼容性**：
-    *   放宽了 MFT 版本检查上限，支持最新的 OFED 24.07+ 及 MFT 4.28+ 工具链。
-3.  **电源状态解析优化**：
-    *   适配了 NDR 交换机的电源寄存器读取逻辑。
+- **Root privileges** (required for register access)
+- **NVIDIA Mellanox Firmware Tools (MFT)** >= 4.18.0
+  - Download from: https://network.nvidia.com/products/adapter-software/firmware-tools/
+- **infiniband-diags** package (for `smpquery`)
+- **MLNX_OFED** driver stack (recommended)
 
-## 📋 前置要求
-
-在运行脚本的主机上（通常是直连交换机的计算节点或管理节点），需要满足：
-
-1.  **Root 权限**：访问 `/dev/mst` 设备需要 root。
-2.  **NVIDIA Firmware Tools (MFT)**：
-    *   必须安装 `mst` 和 `mlxreg_ext` 命令。
-    *   通常包含在 MLNX_OFED 驱动包中。
-3.  **Infiniband 连接**：主机必须通过 IB 线缆物理连接到目标交换机。
-
-## 🛠️ 安装
-
-下载脚本并赋予执行权限：
+## Installation
 
 ```bash
-# 假设脚本名为 ibswinfo_ndr.sh
-chmod +x ibswinfo_ndr.sh
-mv ibswinfo_ndr.sh /usr/local/bin/ibswinfo
+# Clone the repository
+git clone https://github.com/yourusername/ibswinfo.git
+cd ibswinfo
+
+# Make the script executable
+chmod +x ibswinfo.sh
+
+# Optionally, copy to a directory in your PATH
+sudo cp ibswinfo.sh /usr/local/bin/ibswinfo
 ```
 
-确保 MFT 服务已启动：
+## Usage
+
+```
+Usage: ibswinfo.sh -d <device> [-C <hca_dev>] [-P <port>] [-t <type>] [-T] [-o <output>] [-S <description>]
+
+Global Options:
+  -d <device>       MST device path or LID (e.g., "lid-44", "SW_MT53100_lid-98")
+  -C <hca_dev>      HCA device for specific network plane (e.g., "mlx5_4")
+  -P <port>         HCA port number (default: 1)
+  -t <type>         Force switch type: ndr, hdr, or auto (default: auto)
+
+Get Info:
+  -o <category>     Output category: inventory, vitals, or status
+  -T                Include transceiver module temperatures
+
+Set Info:
+  -S <description>  Set node description (max 64 characters)
+  -y                Skip confirmation prompt
+```
+
+## Examples
+
+### Basic Queries
+
 ```bash
-mst start
+# Query switch at LID 98 using default HCA (auto-detect switch type)
+./ibswinfo.sh -d lid-98
+
+# Query using MST device name
+./ibswinfo.sh -d SW_MT53100_Quantum2_lid-98
 ```
 
-## 📖 使用方法
-
-### 1. 查找目标交换机
-使用 `ibswitches` 或 `mst status` 查找交换机的 LID (Local Identifier) 或设备路径。
+### Multi-Subnet / Network Plane Selection
 
 ```bash
-# 方法 A: 使用 ibnetdiscover 工具链 (推荐)
-ibswitches
-# 输出示例: Switch : 0x... ports 64 "Switch-Leaf-01" base port 0 lid 266 lmc 0
+# Query storage network switch via mlx5_4
+./ibswinfo.sh -C mlx5_4 -d lid-98
 
-# 方法 B: 使用 mst 工具
-mst status -v
+# Query compute network switch via mlx5_0
+./ibswinfo.sh -C mlx5_0 -d lid-266
+
+# Specify HCA port explicitly
+./ibswinfo.sh -C mlx5_4 -P 1 -d lid-98
 ```
 
-### 2. 获取信息
-基本语法：
+### Force Switch Type
+
 ```bash
-ibswinfo -d <设备LID或路径> [选项]
+# Force HDR/QM8700 mode
+./ibswinfo.sh -t hdr -C mlx5_4 -d lid-98
+
+# Force NDR/QM9700 mode
+./ibswinfo.sh -t ndr -C mlx5_0 -d lid-266
 ```
 
-#### 常用示例
+### Specific Output Categories
 
-**获取完整报告（清单、状态、生命体征）：**
 ```bash
-./ibswinfo -d lid-266
+# Get inventory only (part number, serial, firmware, etc.)
+./ibswinfo.sh -d lid-98 -o inventory
+
+# Get vitals only (uptime, temperatures, fan speeds, power)
+./ibswinfo.sh -d lid-98 -o vitals
+
+# Get status only (PSU status, fan alerts)
+./ibswinfo.sh -d lid-98 -o status
 ```
 
-**仅查看硬件清单 (SN, PN, FW版本)：**
+### Temperature Monitoring
+
 ```bash
-./ibswinfo -d lid-266 -o inventory
+# Include all module temperatures
+./ibswinfo.sh -d lid-98 -T
+
+# Vitals with module temperatures via specific network plane
+./ibswinfo.sh -C mlx5_4 -t hdr -d lid-98 -o vitals -T
 ```
 
-**仅查看实时状态 (温度, 风扇, 电源瓦数)：**
+### Set Node Description
+
 ```bash
-./ibswinfo -d lid-266 -o vitals
+# Set node description (with confirmation prompt)
+./ibswinfo.sh -d lid-98 -S "Spine-Switch-01-Rack42"
+
+# Set node description (skip confirmation)
+./ibswinfo.sh -d lid-98 -S "Spine-Switch-01-Rack42" -y
 ```
 
-**获取光模块(光透)温度：**
-*注意：这需要轮询所有端口，速度较慢。*
-```bash
-./ibswinfo -d lid-266 -T
+## Sample Output
+
 ```
-
-**修改交换机的主机名 (Node Description)：**
-*警告：请谨慎操作。*
-```bash
-./ibswinfo -d lid-266 -S "Compute-Leaf-01"
-```
-
-## 📊 输出样例 (NDR Switch)
-
-```text
 =================================================
- Device: lid-266
- Current node description: Compute-Leaf-01
+ Storage-Leaf01-A05-20U
 =================================================
-part number        | MQM9700-NS2F
-serial number      | MT2234567890
-product name       | NVIDIA Quantum-2 Switch
-revision           | A2
-modules            | 64
-max ports          | 64
-firmware version   | 31.2010.4050
+switch type        | HDR
+HCA device         | mlx5_4 (port 1)
+part number        | MQM8700-HS2F
+serial number      | MT2043X12345
+product name       | Jaguar Unmng IB 200
+revision           | A1
+modules            | 40
+max ports          | 40
+PSID               | MT_0000000256
+GUID               | 0xb8cef60300abc123
+firmware version   | 27.2012.1012
+CPLD               | 2
 -------------------------------------------------
-uptime (d-h:m:s)   | 12d-04:30:15
+uptime (d-h:m:s)   | 245d-08:32:15
 -------------------------------------------------
 PSU0 status        | OK
-     P/N           | MTEF-PSF-AC-C
+     P/N           | MTEF-PSF-AC-H
+     S/N           | MT2108X00ABC
      DC power      | OK
-     power (W)     | 420
+     fan status    | OK
+     power (W)     | 312
 PSU1 status        | OK
-     ...
+     P/N           | MTEF-PSF-AC-H
+     S/N           | MT2108X00DEF
+     DC power      | OK
+     fan status    | OK
+     power (W)     | 308
 -------------------------------------------------
-temperature (C)    | 52
-max temp (C)       | 75
-warn threshold (C) | 105/115 (low/high)
+temperature (C)    | 48
+max temp (C)       | 62
+warn threshold (C) | 95/105 (low/high)
 -------------------------------------------------
 fan status         | OK
 fan#1 (rpm)        | 12500
-fan#2 (rpm)        | 12450
-...
+fan#2 (rpm)        | 12000
+fan#3 (rpm)        | 12500
+fan#4 (rpm)        | 12000
+fan#5 (rpm)        | 12500
+fan#6 (rpm)        | 12000
 -------------------------------------------------
 ```
 
-## ⚠️ 免责声明
+## Multi-Subnet Architecture
 
-本脚本通过 `mlxreg_ext` 直接读取硬件寄存器。虽然读取操作（Read-Only）通常是安全的，但在生产环境中对关键网络设备进行操作时，请始终保持谨慎。作者不对因使用本脚本造成的任何硬件损坏或业务中断负责。
+In environments with multiple InfiniBand subnets (e.g., separate compute and storage networks), you need to specify which HCA device to use for accessing switches on each subnet.
 
----
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        GPU Server                           │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐        │
+│  │ mlx5_0  │  │ mlx5_1  │  │ mlx5_4  │  │ mlx5_5  │  ...   │
+│  └────┬────┘  └────┬────┘  └────┬────┘  └────┬────┘        │
+│       │            │            │            │              │
+└───────┼────────────┼────────────┼────────────┼──────────────┘
+        │            │            │            │
+        ▼            ▼            ▼            ▼
+   ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐
+   │ QM9700  │  │ QM9700  │  │ QM8700  │  │ QM8700  │
+   │ NDR 400G│  │ NDR 400G│  │ HDR 200G│  │ HDR 200G│
+   │Compute-1│  │Compute-2│  │Storage-1│  │Storage-2│
+   └─────────┘  └─────────┘  └─────────┘  └─────────┘
+   
+   Compute Network (Subnet 1)    Storage Network (Subnet 2)
+```
 
-**Original Credit:** [Kilian Cavalotti](https://github.com/kiliancavalotti/ibswinfo)
-**NDR Patch:** Verified on QM9700 with OFED 24.07 (2025).
+```bash
+# Query Compute Network switches
+./ibswinfo.sh -C mlx5_0 -d lid-266
+
+# Query Storage Network switches  
+./ibswinfo.sh -C mlx5_4 -t hdr -d lid-98
+```
+
+## Supported Switches
+
+| Series | Model | Generation | Speed | Type Flag |
+|--------|-------|------------|-------|-----------|
+| QM9700 | MQM9700-NS2F | Quantum-2 | NDR 400Gb/s | `-t ndr` |
+| QM9790 | MQM9790-NS2F | Quantum-2 | NDR 400Gb/s | `-t ndr` |
+| QM8700 | MQM8700-HS2F | Quantum | HDR 200Gb/s | `-t hdr` |
+| QM8790 | MQM8790-HS2F | Quantum | HDR 200Gb/s | `-t hdr` |
+
+## Troubleshooting
+
+### "must run as root"
+The script requires root privileges to access hardware registers:
+```bash
+sudo ./ibswinfo.sh -d lid-98
+```
+
+### "HCA device not found"
+Verify the HCA device exists:
+```bash
+ls /sys/class/infiniband/
+ibstat
+```
+
+### "device not found in /dev/mst"
+Start the MST service:
+```bash
+mst start
+mst status
+```
+
+### "Failed to send access register"
+- Verify the LID is correct: `iblinkinfo | grep <switch_name>`
+- Check network connectivity: `ibping -L <lid>`
+- Ensure the HCA port is active: `ibstat <hca_dev>`
+
+### Auto-detection fails
+Force the switch type manually:
+```bash
+./ibswinfo.sh -t hdr -d lid-98   # For QM8700
+./ibswinfo.sh -t ndr -d lid-98   # For QM9700
+```
+
+## Version History
+
+- **v2.0** - Unified QM9700/QM8700 support with multi-subnet HCA selection
+- **v1.x** - Original separate scripts for NDR and HDR switches
+
+## Credits
+
+- **Original Author**: Kilian Cavalotti <kilian@stanford.edu>
+- **NDR/Quantum-2 Patches**: Verified against QM9700 registers (2025)
+- **Unified Version**: Merged QM9700/QM8700 support with HCA device selection
+
+## License
+
+GNU General Public License v3.0
+
+See [LICENSE](LICENSE) for details.
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit issues and pull requests.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## Related Tools
+
+- [NVIDIA MFT](https://network.nvidia.com/products/adapter-software/firmware-tools/) - Mellanox Firmware Tools
+- [infiniband-diags](https://github.com/linux-rdma/infiniband-diags) - InfiniBand diagnostic tools
+- [MLNX_OFED](https://network.nvidia.com/products/infiniband-drivers/linux/mlnx_ofed/) - Mellanox OpenFabrics Enterprise Distribution
