@@ -22,7 +22,7 @@ A unified command-line tool for gathering detailed information from unmanaged NV
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/ibswinfo.git
+git clone https://github.com/wuchanghui5220/ibswinfo.git
 cd ibswinfo
 
 # Make the script executable
@@ -57,11 +57,8 @@ Set Info:
 ### Basic Queries
 
 ```bash
-# Query switch at LID 98 using default HCA (auto-detect switch type)
-./ibswinfo.sh -d lid-98
-
-# Query using MST device name
-./ibswinfo.sh -d SW_MT53100_Quantum2_lid-98
+# Query switch at LID 266 using default HCA (auto-detect switch type)
+./ibswinfo.sh -d lid-266
 ```
 
 ### Multi-Subnet / Network Plane Selection
@@ -91,20 +88,20 @@ Set Info:
 
 ```bash
 # Get inventory only (part number, serial, firmware, etc.)
-./ibswinfo.sh -d lid-98 -o inventory
+./ibswinfo.sh -d lid-266 -o inventory
 
 # Get vitals only (uptime, temperatures, fan speeds, power)
-./ibswinfo.sh -d lid-98 -o vitals
+./ibswinfo.sh -d lid-266 -o vitals
 
 # Get status only (PSU status, fan alerts)
-./ibswinfo.sh -d lid-98 -o status
+./ibswinfo.sh -d lid-266 -o status
 ```
 
 ### Temperature Monitoring
 
 ```bash
 # Include all module temperatures
-./ibswinfo.sh -d lid-98 -T
+./ibswinfo.sh -d lid-266 -T
 
 # Vitals with module temperatures via specific network plane
 ./ibswinfo.sh -C mlx5_4 -t hdr -d lid-98 -o vitals -T
@@ -114,10 +111,10 @@ Set Info:
 
 ```bash
 # Set node description (with confirmation prompt)
-./ibswinfo.sh -d lid-98 -S "Spine-Switch-01-Rack42"
+./ibswinfo.sh -d lid-266 -S "Spine-Switch-01-Rack42"
 
 # Set node description (skip confirmation)
-./ibswinfo.sh -d lid-98 -S "Spine-Switch-01-Rack42" -y
+./ibswinfo.sh -d lid-266 -S "Spine-Switch-01-Rack42" -y
 ```
 
 ## Sample Output
@@ -242,7 +239,7 @@ In environments with multiple InfiniBand subnets (e.g., separate compute and sto
 ### "must run as root"
 The script requires root privileges to access hardware registers:
 ```bash
-sudo ./ibswinfo.sh -d lid-98
+sudo ./ibswinfo.sh -d lid-266
 ```
 
 ### "HCA device not found"
@@ -268,7 +265,7 @@ mst status
 Force the switch type manually:
 ```bash
 ./ibswinfo.sh -t hdr -d lid-98   # For QM8700
-./ibswinfo.sh -t ndr -d lid-98   # For QM9700
+./ibswinfo.sh -t ndr -d lid-266   # For QM9700
 ```
 
 ## Version History
@@ -287,16 +284,6 @@ Force the switch type manually:
 GNU General Public License v3.0
 
 See [LICENSE](LICENSE) for details.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit issues and pull requests.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
 
 ## Related Tools
 
