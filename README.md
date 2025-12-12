@@ -124,47 +124,76 @@ Set Info:
 
 ```
 =================================================
- Storage-Leaf01-A05-20U
+ MF0;Storage-Leaf12:MQM8700/U1
 =================================================
 switch type        | HDR
 HCA device         | mlx5_4 (port 1)
-part number        | MQM8700-HS2F
-serial number      | MT2043X12345
-product name       | Jaguar Unmng IB 200
-revision           | A1
+part number        | MQM8700-HS2R
+serial number      | MT2335T12345
+product name       | Jaguar IB 200
+revision           | AM
 modules            | 40
-max ports          | 40
-PSID               | MT_0000000256
-GUID               | 0xb8cef60300abc123
-firmware version   | 27.2012.1012
-CPLD               | 2
+max ports          | 80
+PSID               | MT_0000000062
+GUID               | 0xa088c20300512345
+firmware version   | 27.2014.2126
+CPLD               | 14
 -------------------------------------------------
-uptime (d-h:m:s)   | 245d-08:32:15
+uptime (d-h:m:s)   | 259d-18:55:05
 -------------------------------------------------
 PSU0 status        | OK
-     P/N           | MTEF-PSF-AC-H
-     S/N           | MT2108X00ABC
      DC power      | OK
      fan status    | OK
-     power (W)     | 312
 PSU1 status        | OK
-     P/N           | MTEF-PSF-AC-H
-     S/N           | MT2108X00DEF
      DC power      | OK
      fan status    | OK
-     power (W)     | 308
 -------------------------------------------------
-temperature (C)    | 48
-max temp (C)       | 62
+temperature (C)    | 56
+max temp (C)       | 76
 warn threshold (C) | 95/105 (low/high)
 -------------------------------------------------
+module#01 (C)      | 41
+module#02 (C)      | 41
+module#03 (C)      | 42
+module#04 (C)      | 42
+module#05 (C)      | 45
+module#06 (C)      | 44
+module#07 (C)      | 40
+module#08 (C)      | 43
+module#09 (C)      | 42
+module#10 (C)      | 38
+module#11 (C)      | 46
+module#12 (C)      | 39
+module#13 (C)      | 40
+module#14 (C)      | 33
+module#15 (C)      | 39
+module#16 (C)      | 39
+module#17 (C)      | 37
+module#18 (C)      | 39
+module#19 (C)      | 40
+module#20 (C)      | 37
+module#21 (C)      | 36
+module#22 (C)      | 37
+module#23 (C)      | 33
+module#24 (C)      | 33
+module#25 (C)      | 33
+module#26 (C)      | 34
+module#27 (C)      | 34
+module#28 (C)      | 33
+module#29 (C)      | 39
+module#30 (C)      | 38
+module#31 (C)      | 38
+module#32 (C)      | 37
+module#33 (C)      | 40
+module#34 (C)      | 40
+module#35 (C)      | 40
+module#36 (C)      | 38
+module#37 (C)      | 38
+module#38 (C)      | 37
+module#39 (C)      | 36
+module#40 (C)      | 32
+-------------------------------------------------
 fan status         | OK
-fan#1 (rpm)        | 12500
-fan#2 (rpm)        | 12000
-fan#3 (rpm)        | 12500
-fan#4 (rpm)        | 12000
-fan#5 (rpm)        | 12500
-fan#6 (rpm)        | 12000
 -------------------------------------------------
 ```
 
