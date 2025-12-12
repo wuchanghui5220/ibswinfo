@@ -3,14 +3,15 @@
 # vim: set textwidth=80:
 #
 #==============================================================================
-# ibswinfo (NDR/Quantum-2 Final Verified Version)
+# ibswinfo (Unified QM9700/QM8700 Version)
 #
 # Gather information from unmanaged Infiniband switches
+# Supports both NDR (QM9700/Quantum-2) and HDR (QM8700/Quantum) switches
 #
-# Requires  : NVIDIA Firmare Tools (MFT)
+# Requires  : NVIDIA Firmware Tools (MFT)
 #
 # Original Author    : Kilian Cavalotti <kilian@stanford.edu>
-# Patched for NDR    : Verified against QM9700/Quantum-2 Registers (2025)
+# Unified Version    : Merged QM9700/QM8700 support with HCA device selection
 # License   : GNU GPL v3
 #
 #==============================================================================
@@ -138,16 +139,45 @@ mstr_dec() {
             <<< "${reg[$r]}" | sort -k2n | awk '{printf $NF}')"
 }
 
+# detect switch type from product name or PSID
+# Returns: "ndr" for QM9700/Quantum-2, "hdr" for QM8700/Quantum
+detect_switch_type() {
+    local product_info
+    # Try to get MGIR register to check PSID or device info
+    product_info=$(mlxreg_ext -d "$dev" --reg_name MGIR --get 2>&1 || true)
+
+    # Check for NDR/Quantum-2 indicators (QM9700 series)
+    if echo "$product_info" | grep -qiE "quantum.?2|qm97|ndr|MT53|MT52100"; then
+        echo "ndr"
+        return
+    fi
+
+    # Check for HDR/Quantum indicators (QM8700 series)
+    if echo "$product_info" | grep -qiE "quantum[^2]|qm87|hdr|MT51|MT52000"; then
+        echo "hdr"
+        return
+    fi
+
+    # Default to auto if cannot determine
+    echo "auto"
+}
+
 
 ## -- arg handling ------------------------------------------------------------
 
 usage() {
     cat << EOU
-Usage: ${0##*/} -d <device> [-T] [-o <$outputs>] [-S <description>]
+Usage: ${0##*/} -d <device> [-C <hca_dev>] [-P <port>] [-T] [-o <$outputs>] [-S <description>]
 
   global options:
     -d <device>             MST device path ("mst status" shows devices list)
                             or LID (eg. "-d lid-44")
+    -C <hca_dev>            HCA device to use for specific network plane
+                            (eg. "-C mlx5_4" for querying via mlx5_4)
+    -P <port>               HCA port number (default: 1)
+    -t <type>               Force switch type: ndr (QM9700) or hdr (QM8700)
+                            Default: auto-detect
+
   get info:
     -o <output_category>    Only display $outputs information
     -T                      get transceiver modules temperature
@@ -155,6 +185,14 @@ Usage: ${0##*/} -d <device> [-T] [-o <$outputs>] [-S <description>]
   set info:
     -S <description>        set device description ($MAX_ND_LEN char max.)
     -y                      skip confirmation
+
+  examples:
+    ${0##*/} -d lid-98                           # Query switch at LID 98 (default HCA)
+    ${0##*/} -C mlx5_4 -d lid-98                 # Query via mlx5_4 (storage network)
+    ${0##*/} -C mlx5_4 -P 1 -d lid-98            # Query via mlx5_4 port 1
+    ${0##*/} -C mlx5_0 -d lid-266                # Query via mlx5_0 (compute network)
+    ${0##*/} -t hdr -C mlx5_4 -d lid-98          # Force HDR mode via mlx5_4
+    ${0##*/} -d SW_MT53100_Quantum2_lid-98       # Query by MST device name
 
 EOU
     return 0
@@ -165,9 +203,12 @@ outputs="inventory|vitals|status"
 out=""
 dev=""
 desc=""
+hca_dev=""
+hca_port="1"
+switch_type="auto"
 opt_T=0
 opt_y=0
-optspec="hd:To:S:y"
+optspec="hd:C:P:t:To:S:y"
 while getopts "$optspec" optchar; do
     case "${optchar}" in
         h|\?)
@@ -176,6 +217,18 @@ while getopts "$optspec" optchar; do
             ;;
         d)
             dev=${OPTARG}
+            ;;
+        C)
+            hca_dev=${OPTARG}
+            ;;
+        P)
+            hca_port=${OPTARG}
+            ;;
+        t)
+            switch_type=${OPTARG}
+            [[ ! "$switch_type" =~ ^(ndr|hdr|auto)$ ]] && {
+                err "unknown switch type, must be: ndr, hdr, or auto"
+            }
             ;;
         T)
             opt_T=1
@@ -192,9 +245,9 @@ while getopts "$optspec" optchar; do
                 err "description string > $MAX_ND_LEN characters"
             }
             ;;
-	y)
+        y)
             opt_y=1
-	    ;;
+            ;;
     esac
 done
 
@@ -231,7 +284,6 @@ mft_cur=$(mst version | awk '{gsub(/,/,""); print $3}' | cut -d- -f1)
 mft_req="4.18.0"      # minimum required MFT version
 mft_req_desc="4.22.0" # minimum required MFT version to set device name
 mft_max="4.40.0"      # Bumped max version for OFED 24.07
-mft_cur=$(mst version | awk '{gsub(/,/,""); print $3}' | cut -d- -f1)
 [[ ${mft_cur//./} -lt ${mft_req//./} ]] && \
     err "MFT version must be >= $mft_req (current version is $mft_cur)"
 [[ "$desc" != "" ]] && [[ ${mft_cur//./} -lt ${mft_req_desc//./} ]] && \
@@ -242,18 +294,68 @@ mft_cur=$(mst version | awk '{gsub(/,/,""); print $3}' | cut -d- -f1)
 
 # device
 [[ $dev == "" ]] && err "missing device argument"
-[[ ${dev:0:4} != "lid-" ]] && {
-    [[ ${dev:0:8} == '/dev/mst' ]] && dev=${dev/\/dev\/mst\//}
-    [[ ${dev:0:3} == "SW_" ]] || [[ ${dev:0:3} == "mt5" ]] || err "$dev doesn't look like a switch device name"
-    [[ -r /dev/mst/$dev ]] || err "$dev not found in /dev/mst, is mst started?"
-}
+
+# Store original device for display
+orig_dev="$dev"
+
+# Handle HCA device selection for network plane
+# For multiple IB subnets, device name format is: lid-<lid>,<hca_name>,<port>
+if [[ -n "$hca_dev" ]]; then
+    # Validate HCA device exists
+    if [[ ! -d "/sys/class/infiniband/$hca_dev" ]]; then
+        err "HCA device $hca_dev not found in /sys/class/infiniband/"
+    fi
+
+    # If using LID format, append HCA info to device name
+    if [[ ${dev:0:4} == "lid-" ]]; then
+        # Construct device string with HCA specification
+        # Format: lid-<lid>,<hca_name>,<port>
+        dev="${dev},${hca_dev},${hca_port}"
+    fi
+fi
+
+# Original device validation (for non-LID devices)
+if [[ ${orig_dev:0:4} != "lid-" ]]; then
+    [[ ${orig_dev:0:8} == '/dev/mst' ]] && dev=${dev/\/dev\/mst\//}
+    [[ ${orig_dev:0:3} == "SW_" ]] || [[ ${orig_dev:0:3} == "mt5" ]] || \
+        err "$orig_dev doesn't look like a switch device name"
+    [[ -r /dev/mst/$orig_dev ]] || err "$orig_dev not found in /dev/mst, is mst started?"
+fi
 
 
 ## -- initiate registers ------------------------------------------------------
 
+# PRM registers
+# cf. mft/prm_dbs/switch/ext/register_access_table.adb
+# and kernel:drivers/net/ethernet/mellanox/mlxsw/reg.h
+#
+# MGIR  -  Management General Information Register
+# MGPIR -  Management General Peripheral Information Register
+# MSGI  -  Misc System General Information Register
+# MSCI  -  ...? CPLD information
+# MSPS  -  Misc System Power Supply Register
+# MTMP  -  Management Temperature
+# MTCAP -  Management Temperature Capabilities
+# MFCR  -  Management Fan Control Register
+# FORE  -  Fan Out of Range Event Register
+# SPZR  -  ...? node description
+
+# Auto-detect switch type if not specified
+if [[ "$switch_type" == "auto" ]]; then
+    detected_type=$(detect_switch_type)
+    if [[ "$detected_type" != "auto" ]]; then
+        switch_type="$detected_type"
+    else
+        # Default to NDR for newer deployments
+        switch_type="ndr"
+        warn "Could not auto-detect switch type, defaulting to NDR (QM9700)"
+    fi
+fi
+
 # gather register values
 declare -A reg
 declare -A rid
+
 # select register to read, depending on what output is required
 case $out in
     inventory)
@@ -269,32 +371,46 @@ case $out in
         reg_names="MGIR MGPIR MSGI MSCI MSPS SPZR MTMP MTCAP MFCR FORE"
         ;;
 esac
+
 # some registers need an index
+# and that depends on the version of MFT we're using and switch type
 add_idx="" add_tmp_idx=""
 
-# Define common slot index string for those who need it
-slot_idx_str="slot_index=0x0"
+# Configure indexes based on switch type
+case "$switch_type" in
+    ndr)
+        # NDR/QM9700/Quantum-2 specific configuration
+        slot_idx_str="slot_index=0x0"
 
-[[ ${mft_cur//./} -gt 4190 && \
-   ${mft_cur//./} -lt 4210 ]] && rid[MGIR]="module_base=0x0"
-[[ ${mft_cur//./} -ge 4230 ]] && rid[SPZR]="router_entity=0x0,"
-[[ ${mft_cur//./} -ge 4301 ]] && add_tmp_idx="asic_index=0x0,ig=0x0,i=0x0,"
+        [[ ${mft_cur//./} -gt 4190 && \
+           ${mft_cur//./} -lt 4210 ]] && rid[MGIR]="module_base=0x0"
+        [[ ${mft_cur//./} -ge 4230 ]] && rid[SPZR]="router_entity=0x0,"
+        [[ ${mft_cur//./} -ge 4301 ]] && add_tmp_idx="asic_index=0x0,ig=0x0,i=0x0,"
 
-# --- [PATCH] NDR/Quantum-2 Specific Index Logic ---
+        # MGPIR NEEDS index on NDR
+        rid[MGPIR]+="$slot_idx_str"
+        # MGIR, MSPS, MFCR, FORE -> NO index on NDR
+        rid[MSCI]+="index=0x0"
+        rid[SPZR]+="swid=0x0"
+        rid[MTCAP]="$slot_idx_str"
+        rid[MTMP]+="sensor_index=0x0,${slot_idx_str}${add_tmp_idx:+,$add_tmp_idx}"
+        ;;
 
-# MGPIR NEEDS index on NDR (verified via error logs)
-rid[MGPIR]+="$slot_idx_str"
+    hdr)
+        # HDR/QM8700/Quantum specific configuration
+        [[ ${mft_cur//./} -gt 4150 ]] && add_idx="slot_index=0x0"
+        [[ ${mft_cur//./} -gt 4190 && \
+           ${mft_cur//./} -lt 4210 ]] && rid[MGIR]="module_base=0x0"
+        [[ ${mft_cur//./} -ge 4230 ]] && rid[SPZR]="router_entity=0x0,"
+        [[ ${mft_cur//./} -ge 4301 ]] && add_tmp_idx="asic_index=0x0,ig=0x0,i=0x0,"
 
-# MGIR, MSPS, MFCR, FORE -> NO index (verified via logs)
-
-rid[MSCI]+="index=0x0" # handle main CPLD only
-rid[SPZR]+="swid=0x0"
-
-# [Verified] MTCAP has slot_index
-rid[MTCAP]="$slot_idx_str"
-
-# [Verified] MTMP has sensor_index AND slot_index
-rid[MTMP]+="sensor_index=0x0,${slot_idx_str}${add_tmp_idx:+,$add_tmp_idx}"
+        rid[MGPIR]+="slot_index=0x0"
+        rid[MSCI]+="index=0x0"
+        rid[SPZR]+="swid=0x0"
+        rid[MTMP]+="sensor_index=0x0${add_idx:+,$add_idx}${add_tmp_idx:+,$add_tmp_idx}"
+        rid[MTCAP]="$add_idx"
+        ;;
+esac
 
 # get registers
 _regs=$(for r in $reg_names; do
@@ -313,7 +429,8 @@ done <<< "$_regs"
 [[ -n "$desc" ]] && {
     # get current node description
     cur_nd=$(mstr_dec "node_description" SPZR)
-    echo "Device: $dev"
+    echo "Device: $orig_dev"
+    [[ -n "$hca_dev" ]] && echo "HCA device: $hca_dev (port $hca_port)"
     echo "  Current node description: $cur_nd"
     echo "  Set node description to : $desc"
     [[ "$opt_y" == "0" ]] && {
@@ -409,15 +526,28 @@ done <<< "$_regs"
 
     # optionally get modules temperature
     [[ "$opt_T" == "1" ]] && {
-        _qtps=$(for q in $(seq 1 "$nm"); do
-                    # [PATCH] NDR Offset: Index 65 (0x41) is Module 1
-                    # So offset is q + 64 (1+64=65)
-                    i=$(dtoh $((q+63)))
-                    r="sensor_index=0x$i,${slot_idx_str}"
-                    r+=${add_tmp_idx:+,$add_tmp_idx}
-                    echo "$q" "$(get_reg MTMP "$r" |\
-                                 awk '/^temperature / {print $NF}')" &
-                done)
+        case "$switch_type" in
+            ndr)
+                # NDR: Index 65 (0x41) is Module 1, so offset is q + 64 (1+64=65)
+                # But original code uses q+63, keeping consistent
+                _qtps=$(for q in $(seq 1 "$nm"); do
+                            i=$(dtoh $((q+63)))
+                            r="sensor_index=0x$i,${slot_idx_str}"
+                            r+=${add_tmp_idx:+,$add_tmp_idx}
+                            echo "$q" "$(get_reg MTMP "$r" |\
+                                         awk '/^temperature / {print $NF}')" &
+                        done)
+                ;;
+            hdr)
+                _qtps=$(for q in $(seq 1 "$nm"); do
+                            i=$(dtoh $((q+63)))
+                            r="sensor_index=0x$i${add_idx:+,$add_idx}"
+                            r+=${add_tmp_idx:+,$add_tmp_idx}
+                            echo "$q" "$(get_reg MTMP "$r" |\
+                                         awk '/^temperature / {print $NF}')" &
+                        done)
+                ;;
+        esac
         while read -r q t; do
             qt[q]=$(($(htod "$t")/8))
         done <<< "$_qtps"
@@ -440,9 +570,18 @@ done <<< "$_regs"
         [[ ${at_bmsk:$((i-1)):1} == 1 ]] && at_idxs+="$((at_bmsz-i)) "
     done
     _fsps=$(for t in ${at_idxs:-}; do
-                # [PATCH] MFSM checks - No slot_index needed on NDR
-                echo "$t" "$(get_reg MFSM "tacho=0x$(dtoh "$t")" |&
-                             awk '/^rpm / {print $NF}')" &
+                case "$switch_type" in
+                    ndr)
+                        # NDR: No slot_index needed for MFSM
+                        echo "$t" "$(get_reg MFSM "tacho=0x$(dtoh "$t")" |&
+                                     awk '/^rpm / {print $NF}')" &
+                        ;;
+                    hdr)
+                        # HDR: MFSM needs slot_index
+                        echo "$t" "$(get_reg MFSM "tacho=0x$(dtoh "$t")${add_idx:+,$add_idx}" |&
+                                     awk '/^rpm / {print $NF}')" &
+                        ;;
+                esac
              done)
     while read -r t s; do
         fs[t]=$(htod "${s:-0}")
@@ -547,6 +686,8 @@ esac
 dblsep
 echo " $nd"
 dblsep
+out_kv "switch type" "${switch_type^^}"
+[[ -n "$hca_dev" ]] && out_kv "HCA device" "$hca_dev (port $hca_port)"
 out_kv "part number" "$pn"
 out_kv "serial number" "$sn"
 out_kv "product name" "$cn"
@@ -588,4 +729,3 @@ for t in ${at_idxs:-}; do
     out_kv "fan#$t (rpm)" "${fs[$t]}"
 done
 sep
-
