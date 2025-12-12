@@ -145,19 +145,19 @@ detect_switch_type() {
     local product_info
     # Try to get MGIR register to check PSID or device info
     product_info=$(mlxreg_ext -d "$dev" --reg_name MGIR --get 2>&1 || true)
-
+    
     # Check for NDR/Quantum-2 indicators (QM9700 series)
     if echo "$product_info" | grep -qiE "quantum.?2|qm97|ndr|MT53|MT52100"; then
         echo "ndr"
         return
     fi
-
+    
     # Check for HDR/Quantum indicators (QM8700 series)
     if echo "$product_info" | grep -qiE "quantum[^2]|qm87|hdr|MT51|MT52000"; then
         echo "hdr"
         return
     fi
-
+    
     # Default to auto if cannot determine
     echo "auto"
 }
@@ -305,7 +305,7 @@ if [[ -n "$hca_dev" ]]; then
     if [[ ! -d "/sys/class/infiniband/$hca_dev" ]]; then
         err "HCA device $hca_dev not found in /sys/class/infiniband/"
     fi
-
+    
     # If using LID format, append HCA info to device name
     if [[ ${dev:0:4} == "lid-" ]]; then
         # Construct device string with HCA specification
@@ -348,7 +348,6 @@ if [[ "$switch_type" == "auto" ]]; then
     else
         # Default to NDR for newer deployments
         switch_type="ndr"
-        warn "Could not auto-detect switch type, defaulting to NDR (QM9700)"
     fi
 fi
 
@@ -381,12 +380,12 @@ case "$switch_type" in
     ndr)
         # NDR/QM9700/Quantum-2 specific configuration
         slot_idx_str="slot_index=0x0"
-
+        
         [[ ${mft_cur//./} -gt 4190 && \
            ${mft_cur//./} -lt 4210 ]] && rid[MGIR]="module_base=0x0"
         [[ ${mft_cur//./} -ge 4230 ]] && rid[SPZR]="router_entity=0x0,"
         [[ ${mft_cur//./} -ge 4301 ]] && add_tmp_idx="asic_index=0x0,ig=0x0,i=0x0,"
-
+        
         # MGPIR NEEDS index on NDR
         rid[MGPIR]+="$slot_idx_str"
         # MGIR, MSPS, MFCR, FORE -> NO index on NDR
@@ -395,7 +394,7 @@ case "$switch_type" in
         rid[MTCAP]="$slot_idx_str"
         rid[MTMP]+="sensor_index=0x0,${slot_idx_str}${add_tmp_idx:+,$add_tmp_idx}"
         ;;
-
+        
     hdr)
         # HDR/QM8700/Quantum specific configuration
         [[ ${mft_cur//./} -gt 4150 ]] && add_idx="slot_index=0x0"
@@ -403,7 +402,7 @@ case "$switch_type" in
            ${mft_cur//./} -lt 4210 ]] && rid[MGIR]="module_base=0x0"
         [[ ${mft_cur//./} -ge 4230 ]] && rid[SPZR]="router_entity=0x0,"
         [[ ${mft_cur//./} -ge 4301 ]] && add_tmp_idx="asic_index=0x0,ig=0x0,i=0x0,"
-
+        
         rid[MGPIR]+="slot_index=0x0"
         rid[MSCI]+="index=0x0"
         rid[SPZR]+="swid=0x0"
@@ -566,26 +565,25 @@ done <<< "$_regs"
     at_bmsk="${atmsb_bmsk}${atlsb_bmsk}"
 
     # gather fan speeds for active tachos
+    at_idxs=""
     for (( i=${#at_bmsk}-1; i>0; i-- )); do
         [[ ${at_bmsk:$((i-1)):1} == 1 ]] && at_idxs+="$((at_bmsz-i)) "
     done
-    _fsps=$(for t in ${at_idxs:-}; do
-                case "$switch_type" in
-                    ndr)
-                        # NDR: No slot_index needed for MFSM
-                        echo "$t" "$(get_reg MFSM "tacho=0x$(dtoh "$t")" |&
-                                     awk '/^rpm / {print $NF}')" &
-                        ;;
-                    hdr)
-                        # HDR: MFSM needs slot_index
-                        echo "$t" "$(get_reg MFSM "tacho=0x$(dtoh "$t")${add_idx:+,$add_idx}" |&
-                                     awk '/^rpm / {print $NF}')" &
-                        ;;
-                esac
-             done)
-    while read -r t s; do
-        fs[t]=$(htod "${s:-0}")
-    done <<< "$_fsps"
+    
+    # Check if any active tachos found
+    fan_data_available=1
+    if [[ -z "${at_idxs:-}" ]]; then
+        fan_data_available=0
+    else
+        _fsps=$(for t in ${at_idxs:-}; do
+                    # MFSM register - same for both NDR and HDR (no slot_index)
+                    echo "$t" "$(get_reg MFSM "tacho=0x$(dtoh "$t")" |&
+                                 awk '/^rpm / {print $NF}')" &
+                 done)
+        while read -r t s; do
+            [[ -n "$t" ]] && fs[t]=$(htod "${s:-0}")
+        done <<< "$_fsps"
+    fi
 }
 
 # PSUs (inventory/status/vitals)
@@ -674,9 +672,11 @@ case $out in
                 out_kv "module#$(printf "%02d" "$q").temp (C)" "${qt[$q]}"
             done
         }
-        for t in ${at_idxs:-}; do
-            out_kv "fan#$t.speed (rpm)" "${fs[$t]}"
-        done
+        if [[ "${fan_data_available:-1}" == "1" ]]; then
+            for t in ${at_idxs:-}; do
+                out_kv "fan#$t.speed (rpm)" "${fs[$t]}"
+            done
+        fi
         exit 0
         ;;
 esac
@@ -725,7 +725,9 @@ sep
 
 # fan status
 out_kv "fan status" "$fa"
-for t in ${at_idxs:-}; do
-    out_kv "fan#$t (rpm)" "${fs[$t]}"
-done
+if [[ "${fan_data_available:-1}" == "1" ]]; then
+    for t in ${at_idxs:-}; do
+        out_kv "fan#$t (rpm)" "${fs[$t]}"
+    done
+fi
 sep
